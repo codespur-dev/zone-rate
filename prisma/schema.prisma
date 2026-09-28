@@ -1,0 +1,86 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+model ShippingZone {
+  id                     Int        @id @default(autoincrement())
+  shop                   String
+  name                   String
+  countries              String
+  rateType               String
+  rateSetupId            Int?
+  flatRateName           String?
+  flatRatePrice          Float?
+  status                 String     @default("DRAFT")
+  shopifyProfileId       String?
+  shopifyLocationGroupId String?
+  shopifyZoneId          String?
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+
+  rateSetup RateSetup? @relation(fields: [rateSetupId], references: [id], onDelete: SetNull)
+
+  @@unique([shop, name])
+  @@index([shop])
+  @@index([rateSetupId])
+}
+
+model RateSetup {
+  id               Int       @id @default(autoincrement())
+  shop             String
+  name             String
+  initialWeight    Float
+  weightDifference Float
+  maxWeight        Float
+  initialRate      Float
+  rateDifference   Float
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  rates            RateRow[]
+  zones            ShippingZone[]
+
+  @@unique([shop, name])
+  @@index([shop])
+}
+
+model RateRow {
+  id            Int       @id @default(autoincrement())
+  rateSetupId   Int
+  minimumWeight Float
+  maximumWeight Float
+  rate          Float
+  rateSetup     RateSetup @relation(fields: [rateSetupId], references: [id], onDelete: Cascade)
+
+  @@index([rateSetupId])
+}
