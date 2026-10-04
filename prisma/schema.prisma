@@ -84,3 +84,11 @@ model RateRow {
 
   @@index([rateSetupId])
 }
+model Shop {
+  id                 String   @id @default(cuid())
+  shop               String   @unique
+  planId             String?
+  subscriptionId     String?
+  subscriptionStatus String?
+  updatedAt          DateTime @updatedAt
+}

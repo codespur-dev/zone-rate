@@ -90,18 +90,19 @@ const regionNames = new Intl.DisplayNames(["en"], {
   type: "region",
 });
 
-const COUNTRIES = COUNTRY_CODES.map((code) => ({
-  code,
-
-  name: regionNames.of(code) || code,
-}))
-
+const COUNTRIES = COUNTRY_CODES
+  .filter((code) => !SHOPIFY_UNSUPPORTED_COUNTRY_CODES.has(code))
+  .map((code) => ({
+    code,
+    name: regionNames.of(code) || code,
+  }))
   .sort((first, second) => first.name.localeCompare(second.name));
 
 const buildShopifyZoneInput = (zone, rateRows, currencyCode) => {
-  const countries = JSON.parse(zone.countries).map((code) => ({
+  const countries = JSON.parse(zone.countries)
+  .filter((code) => !SHOPIFY_UNSUPPORTED_COUNTRY_CODES.has(code))
+  .map((code) => ({
     code,
-
     includeAllProvinces: true,
   }));
 
@@ -798,6 +799,40 @@ export const action = async ({ request }) => {
     };
   }
 
+  const existingZones = await db.shippingZone.findMany({
+  where: {
+    shop: session.shop,
+  },
+  select: {
+    countries: true,
+  },
+});
+
+const alreadyAssignedCountries = new Set(
+  existingZones.flatMap((existingZone) => {
+    try {
+      return JSON.parse(existingZone.countries);
+    } catch {
+      return [];
+    }
+  }),
+);
+
+const duplicateCountries = selectedCountries.filter(
+  (countryCode) =>
+    alreadyAssignedCountries.has(countryCode),
+);
+
+if (duplicateCountries.length > 0) {
+  return {
+    success: false,
+    intent: "create",
+    message: `These countries are already assigned to another zone: ${duplicateCountries.join(
+      ", ",
+    )}`,
+  };
+}
+
   if (!["packageWeight", "flat"].includes(rateType)) {
     return {
       success: false,
@@ -938,6 +973,28 @@ export default function ZonesPage() {
 
   const isSubmitting = fetcher.state === "submitting";
 
+  const usedCountryCodes = new Set(
+  zones.flatMap((zone) => zone.countryCodes || []),
+);
+
+const availableCountryCodes = COUNTRIES.filter(
+  (country) => !usedCountryCodes.has(country.code),
+).map((country) => country.code);
+
+const allAvailableSelected =
+  availableCountryCodes.length > 0 &&
+  availableCountryCodes.every((code) =>
+    selectedCountries.includes(code),
+  );
+
+const selectAllRemainingCountries = () => {
+  setSelectedCountries(availableCountryCodes);
+};
+
+const clearSelectedCountries = () => {
+  setSelectedCountries([]);
+};
+
   const filteredCountries = COUNTRIES.filter((country) => {
     const searchValue = countrySearch.trim().toLowerCase();
 
@@ -972,14 +1029,20 @@ export default function ZonesPage() {
   }, [fetcher.data]);
 
   const toggleCountry = (countryCode) => {
-    setSelectedCountries((currentCountries) => {
-      if (currentCountries.includes(countryCode)) {
-        return currentCountries.filter((code) => code !== countryCode);
-      }
+  if (usedCountryCodes.has(countryCode)) {
+    return;
+  }
 
-      return [...currentCountries, countryCode];
-    });
-  };
+  setSelectedCountries((currentCountries) => {
+    if (currentCountries.includes(countryCode)) {
+      return currentCountries.filter(
+        (code) => code !== countryCode,
+      );
+    }
+
+    return [...currentCountries, countryCode];
+  });
+};
 
   const saveZone = () => {
     setErrorMessage("");
@@ -1091,73 +1154,133 @@ export default function ZonesPage() {
           </s-banner>
         )}
 
-        <s-text-field
-          label="Zone Name"
-          name="zoneName"
-          value={zoneName}
-          placeholder="Example: USA & Canada"
-          required
-          onChange={(event) => setZoneName(event.currentTarget.value)}
-        />
-
-        <s-box padding="base" borderWidth="base" borderRadius="base">
-          <s-heading>Select Countries</s-heading>
-
+        <div className="zone-form-grid">
           <s-text-field
-            label="Search Countries"
-            name="countrySearch"
-            value={countrySearch}
-            placeholder="Search by country name or code"
-            onChange={(event) => setCountrySearch(event.currentTarget.value)}
+            label="Zone Name"
+            name="zoneName"
+            value={zoneName}
+            placeholder="Example: USA & Canada"
+            required
+            onChange={(event) => setZoneName(event.currentTarget.value)}
           />
 
+          <s-select
+            label="Rate Type"
+            value={rateType}
+            onChange={(event) => setRateType(event.currentTarget.value)}
+          >
+            <s-option value="packageWeight">Package Weight</s-option>
+            <s-option value="flat">Flat Rate</s-option>
+          </s-select>
+        </div>
+
+        <s-box padding="base" borderWidth="base" borderRadius="base">
+  <div className="country-section-header">
+  <div>
+    <h3 className="country-section-title">
+      Select Countries
+    </h3>
+
+    <p className="country-section-summary">
+      <strong>{availableCountryCodes.length}</strong> available
+      <span>•</span>
+      <strong>{usedCountryCodes.size}</strong> already assigned
+      <span>•</span>
+      <strong>{selectedCountries.length}</strong> selected
+    </p>
+  </div>
+
+  <button
+    type="button"
+    className={
+      allAvailableSelected
+        ? "country-action-button clear"
+        : "country-action-button"
+    }
+    onClick={
+      allAvailableSelected
+        ? clearSelectedCountries
+        : selectAllRemainingCountries
+    }
+    disabled={availableCountryCodes.length === 0}
+  >
+    {allAvailableSelected
+      ? "Clear selection"
+      : "Select all remaining"}
+  </button>
+</div>
+
+  <s-text-field
+    label="Search Countries"
+    name="countrySearch"
+    value={countrySearch}
+    placeholder="Search by country name or code"
+    onChange={(event) =>
+      setCountrySearch(event.currentTarget.value)
+    }
+  />
+
+  <div
+    style={{
+      marginTop: "12px",
+      maxHeight: "320px",
+      overflowY: "auto",
+      border: "1px solid #e1e1e1",
+      borderRadius: "8px",
+      padding: "12px",
+    }}
+  >
+    <s-stack direction="block" gap="small">
+      {filteredCountries.map((country) => {
+        const isAlreadyUsed = usedCountryCodes.has(
+          country.code,
+        );
+
+        return (
           <div
+            key={country.code}
             style={{
-              marginTop: "12px",
-
-              maxHeight: "320px",
-
-              overflowY: "auto",
-
-              border: "1px solid #e1e1e1",
-
-              borderRadius: "8px",
-
-              padding: "12px",
+              opacity: isAlreadyUsed ? 0.5 : 1,
+              cursor: isAlreadyUsed
+                ? "not-allowed"
+                : "pointer",
             }}
           >
-            <s-stack direction="block" gap="small">
-              {filteredCountries.map((country) => (
-                <s-checkbox
-                  key={country.code}
-                  label={`${country.name} (${country.code})`}
-                  checked={selectedCountries.includes(country.code)}
-                  onChange={() => toggleCountry(country.code)}
-                />
-              ))}
-            </s-stack>
+            <s-checkbox
+              label={`${country.name} (${country.code})${
+                isAlreadyUsed
+                  ? " — Already assigned"
+                  : ""
+              }`}
+              checked={
+                isAlreadyUsed ||
+                selectedCountries.includes(country.code)
+              }
+              disabled={isAlreadyUsed}
+              onChange={() =>
+                toggleCountry(country.code)
+              }
+            />
           </div>
+        );
+      })}
+    </s-stack>
+  </div>
 
-          <s-paragraph>
-            Selected countries:{" "}
-            {selectedCountries.length > 0
-              ? selectedCountries.join(", ")
-              : "None"}
-          </s-paragraph>
-        </s-box>
+  <s-paragraph>
+    Selected countries: {selectedCountries.length}
+  </s-paragraph>
 
-        <s-select
-          label="Rate Type"
-          value={rateType}
-          onChange={(event) => setRateType(event.currentTarget.value)}
-        >
-          <s-option value="packageWeight">Package Weight</s-option>
-
-          <s-option value="flat">Flat Rate</s-option>
-        </s-select>
+  {availableCountryCodes.length === 0 && (
+    <s-banner tone="info">
+      All available countries have already been assigned
+      to shipping zones.
+    </s-banner>
+  )}
+</s-box>
 
         {rateType === "packageWeight" && (
-          <>
+          <div className="zone-form-grid">
             {rateSetups.length === 0 ? (
               <s-banner tone="warning">
                 Create and save a weight setup on the Rate Setup page first.
@@ -1179,7 +1302,7 @@ export default function ZonesPage() {
                 ))}
               </s-select>
             )}
-          </>
+          </div>
         )}
 
         {rateType === "flat" && (
@@ -1222,69 +1345,228 @@ export default function ZonesPage() {
         {zones.length === 0 ? (
           <s-paragraph>No shipping zones have been saved yet.</s-paragraph>
         ) : (
-          <s-stack direction="block" gap="base">
-            {zones.map((zone) => (
-              <s-box
-                key={zone.id}
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <s-heading>{zone.name}</s-heading>
-
-                <s-paragraph>
-                  Countries: {zone.countryCodes.join(", ")}
-                </s-paragraph>
-
-                <s-paragraph>
-                  Rate type:{" "}
-                  {zone.rateType === "packageWeight"
-                    ? "Package Weight"
-                    : "Flat Rate"}
-                </s-paragraph>
-
-                {zone.rateType === "packageWeight" && (
-                  <s-paragraph>
-                    Weight setup:{" "}
-                    {zone.rateSetup?.name || "Setup not available"}
-                  </s-paragraph>
-                )}
-
-                {zone.rateType === "flat" && (
-                  <>
-                    <s-paragraph>Rate name: {zone.flatRateName}</s-paragraph>
-
-                    <s-paragraph>Price: {zone.flatRatePrice}</s-paragraph>
-                  </>
-                )}
-
-                <s-paragraph>Status: {zone.status}</s-paragraph>
-
-                {zone.status !== "ACTIVE" && (
-                  <s-button
-                    variant="primary"
-                    onClick={() => uploadZone(zone.id)}
-                    disabled={isSubmitting}
-                    {...(isSubmitting ? { loading: true } : {})}
-                  >
-                    Upload to Shopify
-                  </s-button>
-                )}
-
-                <s-button
-                  tone="critical"
-                  variant="tertiary"
-                  onClick={() => deleteZone(zone.id)}
-                  disabled={zone.status === "ACTIVE" || isSubmitting}
-                >
-                  Delete Zone
-                </s-button>
-              </s-box>
-            ))}
-          </s-stack>
+          <div className="table-scroll">
+            <table className="data-table zone-table">
+              <thead>
+                <tr>
+                  <th>Zone Name</th>
+                  <th>Countries</th>
+                  <th>Rate Type</th>
+                  <th>Rate Details</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {zones.map((zone) => (
+                  <tr key={zone.id}>
+                    <td>
+                      <strong>{zone.name}</strong>
+                    </td>
+                    <td
+                      className="country-cell"
+                      title={zone.countryCodes.join(", ")}
+                    >
+                      {zone.countryCodes.join(", ")}
+                    </td>
+                    <td>
+                      {zone.rateType === "packageWeight"
+                        ? "Package Weight"
+                        : "Flat Rate"}
+                    </td>
+                    <td>
+                      {zone.rateType === "packageWeight"
+                        ? zone.rateSetup?.name || "Setup not available"
+                        : `${zone.flatRateName || "Flat rate"} — ${zone.flatRatePrice}`}
+                    </td>
+                    <td>
+                      <span
+                        className={`status-badge ${zone.status === "ACTIVE" ? "active" : "draft"}`}
+                      >
+                        {zone.status}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="table-actions">
+                        {zone.status !== "ACTIVE" && (
+                          <s-button
+                            variant="primary"
+                            onClick={() => uploadZone(zone.id)}
+                            disabled={isSubmitting}
+                          >
+                            Upload
+                          </s-button>
+                        )}
+                        <s-button
+                          tone="critical"
+                          variant="tertiary"
+                          onClick={() => deleteZone(zone.id)}
+                          disabled={zone.status === "ACTIVE" || isSubmitting}
+                        >
+                          Delete
+                        </s-button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </s-section>
+
+      <style>{`
+        .zone-form-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 18px 20px;
+          margin: 18px 0;
+        }
+        .table-scroll { overflow-x: auto; width: 100%; }
+        .data-table {
+          width: 100%;
+          min-width: 900px;
+          border-collapse: separate;
+          border-spacing: 0;
+          border: 1px solid #e1e3e5;
+          border-radius: 10px;
+          overflow: hidden;
+          background: #fff;
+        }
+        .data-table th {
+          padding: 13px 14px;
+          text-align: left;
+          font-size: 13px;
+          font-weight: 650;
+          background: #f6f6f7;
+          border-bottom: 1px solid #e1e3e5;
+          white-space: nowrap;
+        }
+        .data-table td {
+          padding: 13px 14px;
+          border-bottom: 1px solid #ebebeb;
+          vertical-align: middle;
+          white-space: nowrap;
+        }
+        .data-table tbody tr:last-child td { border-bottom: 0; }
+        .data-table tbody tr:hover { background: #fafafa; }
+        .country-cell {
+          max-width: 260px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .table-actions { display: flex; align-items: center; gap: 8px; }
+        .status-badge {
+          display: inline-flex;
+          padding: 4px 9px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 650;
+        }
+        .status-badge.active { color: #0c5132; background: #e3f1df; }
+        .status-badge.draft { color: #614b00; background: #fff1c8; }
+        @media (max-width: 700px) {
+          .zone-form-grid { grid-template-columns: 1fr; gap: 14px; }
+        }
+        .country-section-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 20px;
+          margin-bottom: 18px;
+        }
+
+        .country-section-title {
+          margin: 0 0 5px;
+          color: #202223;
+          font-size: 16px;
+          font-weight: 650;
+          line-height: 1.3;
+        }
+
+        .country-section-summary {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 7px;
+          margin: 0;
+          color: #6d7175;
+          font-size: 13px;
+          line-height: 1.4;
+        }
+
+        .country-section-summary strong {
+          color: #303030;
+          font-weight: 600;
+        }
+
+        .country-section-summary span {
+          color: #b5b5b5;
+        }
+
+        .country-action-button {
+          flex-shrink: 0;
+          min-height: 36px;
+          padding: 7px 14px;
+          border: 1px solid #8c9196;
+          border-radius: 8px;
+          background: #ffffff;
+          color: #202223;
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 600;
+          line-height: 20px;
+          cursor: pointer;
+          box-shadow:
+            0 1px 0 rgba(0, 0, 0, 0.05),
+            inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+          transition:
+            background 0.15s ease,
+            border-color 0.15s ease,
+            box-shadow 0.15s ease;
+        }
+
+        .country-action-button:hover {
+          border-color: #616a75;
+          background: #f6f6f7;
+          box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08);
+        }
+
+        .country-action-button:active {
+          background: #ebebeb;
+          box-shadow: none;
+        }
+
+        .country-action-button.clear {
+          border-color: #d72c0d;
+          color: #b42318;
+          background: #fff8f7;
+        }
+
+        .country-action-button.clear:hover {
+          background: #fff1ef;
+        }
+
+        .country-action-button:disabled {
+          border-color: #d2d5d8;
+          background: #f6f6f7;
+          color: #8c9196;
+          cursor: not-allowed;
+          box-shadow: none;
+        }
+
+        @media (max-width: 600px) {
+          .country-section-header {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 12px;
+          }
+
+          .country-action-button {
+            width: 100%;
+          }
+        }
+      `}</style>
     </s-page>
   );
 }

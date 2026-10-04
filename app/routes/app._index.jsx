@@ -432,82 +432,66 @@ export default function Index() {
           </s-banner>
         )}
 
-        <s-text-field
-          label="Rate Setup Name"
-          name="setupName"
-          value={setupName}
-          placeholder="Example: USA Weight Rates"
-          required
-          onChange={(event) => setSetupName(event.currentTarget.value)}
-        />
+        <div className="rate-form-grid">
+          <s-text-field
+            label="Rate Setup Name"
+            name="setupName"
+            value={setupName}
+            placeholder="Example: USA Weight Rates"
+            required
+            onChange={(event) => setSetupName(event.currentTarget.value)}
+          />
 
-        <s-number-field
-          label="Initial Weight (kg)"
-          name="initialWeight"
-          value={initialWeight}
-          min="0"
-          step="0.1"
-          required
-          onChange={(event) => setInitialWeight(event.currentTarget.value)}
-        />
+          <s-number-field
+            label="Initial Weight (kg)"
+            name="initialWeight"
+            value={initialWeight}
+            min="0"
+            step="0.1"
+            required
+            onChange={(event) => setInitialWeight(event.currentTarget.value)}
+          />
 
-        <s-paragraph>
-          Current Initial weight: {initialWeight || "Not Set"} kg
-        </s-paragraph>
+          <s-number-field
+            label="Weight Difference (kg)"
+            name="weightDifference"
+            value={weightDifference}
+            min="0"
+            step="0.1"
+            required
+            onChange={(event) => setWeightDifference(event.currentTarget.value)}
+          />
 
-        <s-number-field
-          label="Weight Difference (kg)"
-          name="weightDifference"
-          value={weightDifference}
-          min="0"
-          step="0.1"
-          required
-          onChange={(event) => setWeightDifference(event.currentTarget.value)}
-        />
+          <s-number-field
+            label="Maximum Weight (kg)"
+            name="maxWeight"
+            value={maxWeight}
+            min="0"
+            step="0.1"
+            required
+            onChange={(event) => setMaxWeight(event.currentTarget.value)}
+          />
 
-        <s-paragraph>
-          Current Weight Difference: {weightDifference || "Not Set"} kg
-        </s-paragraph>
+          <s-number-field
+            label="Initial Rate"
+            name="initialRate"
+            value={initialRate}
+            min="0"
+            step="0.01"
+            required
+            onChange={(event) => setInitialRate(event.currentTarget.value)}
+          />
 
-        <s-number-field
-          label="Max Weight (kg)"
-          name="maxWeight"
-          value={maxWeight}
-          min="0"
-          step="0.1"
-          required
-          onChange={(event) => setMaxWeight(event.currentTarget.value)}
-        />
-
-        <s-paragraph>Max Weight: {maxWeight || "Not Set"} kg</s-paragraph>
-
-        <s-number-field
-          label="Initial Rate"
-          name="initialRate"
-          value={initialRate}
-          min="0"
-          step="0.01"
-          required
-          onChange={(event) => setInitialRate(event.currentTarget.value)}
-        />
-
-        <s-paragraph>
-          Current Initial Rate: {initialRate || "Not Set"}
-        </s-paragraph>
-
-        <s-number-field
-          label="Rate Difference"
-          name="rateDifference"
-          value={rateDifference}
-          min="0"
-          step="0.01"
-          required
-          onChange={(event) => setRateDifference(event.currentTarget.value)}
-        />
-
-        <s-paragraph>
-          Current Rate Difference: {rateDifference || "Not Set"}
-        </s-paragraph>
+          <s-number-field
+            label="Rate Difference"
+            name="rateDifference"
+            value={rateDifference}
+            min="0"
+            step="0.01"
+            required
+            onChange={(event) => setRateDifference(event.currentTarget.value)}
+          />
+        </div>
 
         {errorMessage && <s-banner tone="critical">{errorMessage}</s-banner>}
 
@@ -623,47 +607,90 @@ export default function Index() {
         {rateSetups.length === 0 ? (
           <s-paragraph>No rate setups have been saved yet.</s-paragraph>
         ) : (
-          <s-stack direction="block" gap="base">
-            {rateSetups.map((setup) => (
-              <s-box
-                key={setup.id}
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <s-heading>{setup.name}</s-heading>
-
-                <s-paragraph>
-                  Initial weight: {setup.initialWeight} kg
-                </s-paragraph>
-
-                <s-paragraph>
-                  Weight difference: {setup.weightDifference} kg
-                </s-paragraph>
-
-                <s-paragraph>Maximum weight: {setup.maxWeight} kg</s-paragraph>
-
-                <s-paragraph>Initial rate: {setup.initialRate}</s-paragraph>
-
-                <s-paragraph>
-                  Rate difference: {setup.rateDifference}
-                </s-paragraph>
-
-                <s-paragraph>Generated rows: {setup._count.rates}</s-paragraph>
-
-                <s-button
-                  tone="critical"
-                  variant="tertiary"
-                  onClick={() => deleteRateSetup(setup.id)}
-                >
-                  Delete Setup
-                </s-button>
-              </s-box>
-            ))}
-          </s-stack>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Setup Name</th>
+                  <th>Initial Weight</th>
+                  <th>Weight Difference</th>
+                  <th>Maximum Weight</th>
+                  <th>Initial Rate</th>
+                  <th>Rate Difference</th>
+                  <th>Rows</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rateSetups.map((setup) => (
+                  <tr key={setup.id}>
+                    <td>
+                      <strong>{setup.name}</strong>
+                    </td>
+                    <td>{setup.initialWeight} kg</td>
+                    <td>{setup.weightDifference} kg</td>
+                    <td>{setup.maxWeight} kg</td>
+                    <td>{setup.initialRate}</td>
+                    <td>{setup.rateDifference}</td>
+                    <td>{setup._count.rates}</td>
+                    <td>
+                      <s-button
+                        tone="critical"
+                        variant="tertiary"
+                        onClick={() => deleteRateSetup(setup.id)}
+                      >
+                        Delete
+                      </s-button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </s-section>
+
+      <style>{`
+        .rate-form-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 18px 20px;
+          margin: 18px 0;
+        }
+        .table-scroll { overflow-x: auto; width: 100%; }
+        .data-table {
+          width: 100%;
+          min-width: 940px;
+          border-collapse: separate;
+          border-spacing: 0;
+          border: 1px solid #e1e3e5;
+          border-radius: 10px;
+          overflow: hidden;
+          background: #fff;
+        }
+        .data-table th {
+          padding: 13px 14px;
+          text-align: left;
+          font-size: 13px;
+          font-weight: 650;
+          color: #303030;
+          background: #f6f6f7;
+          border-bottom: 1px solid #e1e3e5;
+          white-space: nowrap;
+        }
+        .data-table td {
+          padding: 13px 14px;
+          border-bottom: 1px solid #ebebeb;
+          color: #303030;
+          vertical-align: middle;
+          white-space: nowrap;
+        }
+        .data-table tbody tr:last-child td { border-bottom: 0; }
+        .data-table tbody tr:hover { background: #fafafa; }
+        @media (max-width: 700px) {
+          .rate-form-grid { grid-template-columns: 1fr; gap: 14px; }
+        }
+      `}</style>
     </s-page>
   );
 }
