@@ -79,35 +79,84 @@ export const action = async ({ request }) => {
 
   const rateDifference = Number(formData.get("rateDifference"));
 
-  let calculatedRates = [];
-
-  try {
-    calculatedRates = JSON.parse(
-      String(formData.get("calculatedRates") || "[]"),
-    );
-  } catch {
-    return {
-      success: false,
-
-      message: "Calculated rates data is invalid.",
-    };
-  }
-
   if (!setupName) {
-    return {
-      success: false,
+  return {
+    success: false,
+    message: "Please enter a rate setup name.",
+  };
+}
 
-      message: "Please enter a rate setup name.",
-    };
-  }
+const numericValues = [
+  initialWeight,
+  weightDifference,
+  maxWeight,
+  initialRate,
+  rateDifference,
+];
 
-  if (calculatedRates.length === 0) {
-    return {
-      success: false,
+if (!numericValues.every(Number.isFinite)) {
+  return {
+    success: false,
+    message: "Please enter valid numeric values in every field.",
+  };
+}
 
-      message: "Please calculate rates before saving.",
-    };
-  }
+if (initialWeight < 0 || initialRate < 0 || rateDifference < 0) {
+  return {
+    success: false,
+    message: "Weights and rates cannot be negative.",
+  };
+}
+
+if (weightDifference < 0.001 || maxWeight <= initialWeight) {
+  return {
+    success: false,
+    message:
+      "Weight difference must be at least 0.001 and Weight Up To must exceed the initial weight.",
+  };
+}
+
+const estimatedRows = Math.ceil(
+  (maxWeight - initialWeight) / weightDifference,
+);
+
+if (estimatedRows > 1000) {
+  return {
+    success: false,
+    message:
+      "This setup creates more than 1,000 rates. Increase the weight difference.",
+  };
+}
+
+const roundWeight = (value) => Number(value.toFixed(3));
+const roundRate = (value) => Number(value.toFixed(2));
+const calculatedRates = [];
+
+let currentMinimum = roundWeight(initialWeight);
+let currentMaximum = roundWeight(
+  Math.min(currentMinimum + weightDifference, maxWeight),
+);
+let currentRate = roundRate(initialRate);
+
+calculatedRates.push({
+  minimum: currentMinimum,
+  maximum: currentMaximum,
+  rate: currentRate,
+});
+
+while (currentMaximum < maxWeight) {
+  currentMinimum = roundWeight(currentMaximum + 0.001);
+  currentMaximum = roundWeight(
+    Math.min(currentMaximum + weightDifference, maxWeight),
+  );
+  currentRate = roundRate(currentRate + rateDifference);
+
+  calculatedRates.push({
+    minimum: currentMinimum,
+    maximum: currentMaximum,
+    rate: currentRate,
+  });
+}
 
   try {
     const savedSetup = await db.rateSetup.create({
@@ -165,7 +214,7 @@ export default function Index() {
 
   const fetcher = useFetcher();
 
-  const [shippingProfileMode, setShippingProfileMode] = useState("GENERAL");
+  const [shippingProfileMode, setShippingProfileMode] = useState("CUSTOM");
 
   useEffect(() => {
     const savedMode = window.localStorage.getItem("shippingProfileMode");
@@ -258,8 +307,8 @@ export default function Index() {
       return;
     }
 
-    if (weightDiff <= 0) {
-      setErrorMessage("Weight difference must be greater than 0.");
+    if (weightDiff < 0.001) {
+      setErrorMessage("Weight difference must be at least 0.001.");
       return;
     }
 
@@ -493,7 +542,7 @@ export default function Index() {
           />
         </div>
 
-        {errorMessage && <s-banner tone="critical">{errorMessage}</s-banner>}
+        {/* {errorMessage && <s-banner tone="critical">{errorMessage}</s-banner>} */}
 
         <s-stack direction="inline" gap="base">
           <s-button onClick={calculateRates}>Calculate Rates</s-button>

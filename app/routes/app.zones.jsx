@@ -8,6 +8,12 @@ import { authenticate } from "../shopify.server";
 
 import db from "../db.server";
 
+import {
+  canCreateZone,
+  getShopUsage,
+  reconcileShopPlan,
+} from "../plan.server";
+
 const COUNTRY_CODES = `
 
 AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ
@@ -167,8 +173,59 @@ const buildShopifyZoneInput = (zone, rateRows, currencyCode) => {
   };
 };
 
+const saveUploadedZone = async ({
+  shop,
+  zoneId,
+  planId,
+  profileId,
+  locationGroupId,
+  shopifyZoneId,
+}) => {
+  const operations = [
+    db.shippingZone.update({
+      where: {
+        id: zoneId,
+      },
+      data: {
+        status: "ACTIVE",
+        shopifyProfileId: profileId,
+        shopifyLocationGroupId: locationGroupId,
+        shopifyZoneId,
+      },
+    }),
+  ];
+
+  if (planId === "free") {
+    operations.push(
+      db.shop.upsert({
+        where: {
+          shop,
+        },
+        update: {
+          freeUploadUsed: true,
+          firstFreeUploadAt: new Date(),
+        },
+        create: {
+          shop,
+          freeUploadUsed: true,
+          firstFreeUploadAt: new Date(),
+        },
+      }),
+    );
+  }
+
+  await db.$transaction(operations);
+};
+
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+
+  const { planId } = await reconcileShopPlan({
+    admin,
+    shop: session.shop,
+  });
+
+  const shopUsage = await getShopUsage(session.shop);
 
   const rateSetups = await db.rateSetup.findMany({
     where: {
@@ -234,8 +291,9 @@ export const loader = async ({ request }) => {
 
   return {
     rateSetups,
-
     zones,
+    planId,
+    freeUploadUsed: shopUsage.freeUploadUsed,
   };
 };
 
@@ -247,6 +305,10 @@ export const action = async ({ request }) => {
   const intent = String(formData.get("intent") || "");
 
   if (intent === "upload") {
+    const { planId } = await reconcileShopPlan({
+      admin,
+      shop: session.shop,
+    });
     const zoneId = Number(formData.get("zoneId"));
     const shippingProfileMode =
       String(formData.get("shippingProfileMode") || "GENERAL") === "CUSTOM"
@@ -281,6 +343,35 @@ export const action = async ({ request }) => {
         intent: "upload",
         message: "This zone is already uploaded to Shopify.",
       };
+    }
+    
+    if (planId === "free") {
+      const shopUsage = await getShopUsage(session.shop);
+
+      if (shopUsage.freeUploadUsed) {
+        return {
+          success: false,
+          intent: "upload",
+          message:
+            "Your store has already used its Free plan upload. Upgrade to Standard to upload another zone.",
+        };
+      }
+
+      const activeZoneCount = await db.shippingZone.count({
+        where: {
+          shop: session.shop,
+          status: "ACTIVE",
+        },
+      });
+
+      if (activeZoneCount >= 1) {
+        return {
+          success: false,
+          intent: "upload",
+          message:
+            "The Free plan allows one active shipping zone. Upgrade to Standard for additional zones.",
+        };
+      }
     }
 
     if (zone.rateType === "packageWeight" && !zone.rateSetup) {
@@ -404,7 +495,7 @@ export const action = async ({ request }) => {
                 id
                 profileLocationGroups {
                   locationGroup { id }
-                  locationGroupZones(first: 100) {
+                  locationGroupZones(first: 250) {
                     edges { node { zone { id name } } }
                   }
                 }
@@ -460,14 +551,13 @@ export const action = async ({ request }) => {
         };
       }
 
-      await db.shippingZone.update({
-        where: { id: zone.id },
-        data: {
-          status: "ACTIVE",
-          shopifyProfileId: generalProfile.id,
-          shopifyLocationGroupId: generalGroup.locationGroup.id,
-          shopifyZoneId,
-        },
+      await saveUploadedZone({
+        shop: session.shop,
+        zoneId: zone.id,
+        planId,
+        profileId: generalProfile.id,
+        locationGroupId: generalGroup.locationGroup.id,
+        shopifyZoneId,
       });
 
       return {
@@ -477,25 +567,15 @@ export const action = async ({ request }) => {
       };
     }
 
-    const existingUploadedZone = await db.shippingZone.findFirst({
-      where: {
-        shop: session.shop,
-
-        status: "ACTIVE",
-
-        shopifyProfileId: { not: null },
-
-        shopifyLocationGroupId: { not: null },
-      },
+    const shopSettings = await db.shop.findUnique({
+      where: { shop: session.shop },
     });
 
-    let profileId;
-
-    let locationGroupId;
-
+    let profileId = shopSettings?.appProfileId || null;
+    let locationGroupId = shopSettings?.appLocationGroupId || null;
     let shopifyZoneId;
 
-    if (!existingUploadedZone) {
+    if (!profileId || !locationGroupId) {
       const createResponse = await admin.graphql(
         `#graphql
 
@@ -511,7 +591,7 @@ export const action = async ({ request }) => {
 
                   locationGroup { id }
 
-                  locationGroupZones(first: 100) {
+                  locationGroupZones(first: 250) {
 
                     edges {
 
@@ -585,10 +665,19 @@ export const action = async ({ request }) => {
       shopifyZoneId = profileGroup.locationGroupZones.edges.find(
         (edge) => edge.node.zone.name === zone.name,
       )?.node.zone.id;
+      await db.shop.upsert({
+        where: { shop: session.shop },
+        update: {
+          appProfileId: profileId,
+          appLocationGroupId: locationGroupId,
+        },
+        create: {
+          shop: session.shop,
+          appProfileId: profileId,
+          appLocationGroupId: locationGroupId,
+        },
+      });
     } else {
-      profileId = existingUploadedZone.shopifyProfileId;
-
-      locationGroupId = existingUploadedZone.shopifyLocationGroupId;
 
       const updateResponse = await admin.graphql(
         `#graphql
@@ -605,7 +694,7 @@ export const action = async ({ request }) => {
 
                   locationGroup { id }
 
-                  locationGroupZones(first: 100) {
+                  locationGroupZones(first: 250) {
 
                     edges {
 
@@ -684,18 +773,13 @@ export const action = async ({ request }) => {
       };
     }
 
-    await db.shippingZone.update({
-      where: { id: zone.id },
-
-      data: {
-        status: "ACTIVE",
-
-        shopifyProfileId: profileId,
-
-        shopifyLocationGroupId: locationGroupId,
-
-        shopifyZoneId,
-      },
+    await saveUploadedZone({
+      shop: session.shop,
+      zoneId: zone.id,
+      planId,
+      profileId,
+      locationGroupId,
+      shopifyZoneId,
     });
 
     return {
@@ -724,14 +808,55 @@ export const action = async ({ request }) => {
       where: { id: zoneId, shop: session.shop },
     });
 
-    if (zone?.status === "ACTIVE") {
+    if (!zone) {
       return {
         success: false,
-
         intent: "delete",
-
-        message: "Active Shopify zones cannot be deleted from the app yet.",
+        message: "Shipping zone was not found.",
       };
+    }
+
+    if (
+      zone.status === "ACTIVE" &&
+      zone.shopifyProfileId &&
+      zone.shopifyZoneId
+    ) {
+      const deleteResponse = await admin.graphql(
+        `#graphql
+          mutation DeleteDeliveryZone($id: ID!, $profile: DeliveryProfileInput!) {
+            deliveryProfileUpdate(id: $id, profile: $profile) {
+              profile { id }
+              userErrors { field message }
+            }
+          }
+        `,
+        {
+          variables: {
+            id: zone.shopifyProfileId,
+            profile: {
+              zonesToDelete: [zone.shopifyZoneId],
+            },
+          },
+        },
+      );
+
+      const deleteJson = await deleteResponse.json();
+      const deletePayload = deleteJson.data?.deliveryProfileUpdate;
+
+      const deleteErrors = [
+        ...(deleteJson.errors || []).map((error) => error.message),
+        ...(deletePayload?.userErrors || []).map((error) => error.message),
+      ];
+
+      if (deleteErrors.length > 0 || !deletePayload?.profile) {
+        return {
+          success: false,
+          intent: "delete",
+          message:
+            deleteErrors.join(" ") ||
+            "Shopify could not remove this active shipping zone.",
+        };
+      }
     }
 
     await db.shippingZone.deleteMany({
@@ -759,6 +884,27 @@ export const action = async ({ request }) => {
     };
   }
 
+  const { planId } = await reconcileShopPlan({
+    admin,
+    shop: session.shop,
+  });
+
+  const zoneAccess = await canCreateZone({
+    shop: session.shop,
+    planId,
+  });
+
+  if (!zoneAccess.allowed) {
+    return {
+      success: false,
+      intent: "create",
+      message:
+        zoneAccess.reason === "FREE_UPLOAD_USED"
+          ? "Your store has already used its Free plan upload. Upgrade to Standard to create another zone."
+          : "The Free plan allows one shipping zone. Upgrade to Standard to create additional zones.",
+    };
+  }
+
   const zoneName = String(formData.get("zoneName") || "").trim();
 
   const rateType = String(formData.get("rateType") || "");
@@ -782,6 +928,26 @@ export const action = async ({ request }) => {
       message: "Selected countries data is invalid.",
     };
   }
+
+  const allowedCountryCodes = new Set(
+  COUNTRIES.map((country) => country.code),
+);
+
+if (
+  !Array.isArray(selectedCountries) ||
+  selectedCountries.some(
+    (countryCode) =>
+      typeof countryCode !== "string" ||
+      !allowedCountryCodes.has(countryCode),
+  )
+) {
+  return {
+    success: false,
+    message: "One or more selected countries are invalid.",
+  };
+}
+
+selectedCountries = [...new Set(selectedCountries)];
 
   if (!zoneName) {
     return {
@@ -943,7 +1109,7 @@ if (duplicateCountries.length > 0) {
 };
 
 export default function ZonesPage() {
-  const { rateSetups, zones } = useLoaderData();
+  const { rateSetups, zones, planId, freeUploadUsed } = useLoaderData();
 
   const fetcher = useFetcher();
 
@@ -962,7 +1128,7 @@ export default function ZonesPage() {
   const [flatRatePrice, setFlatRatePrice] = useState("");
 
   const [errorMessage, setErrorMessage] = useState("");
-  const [shippingProfileMode, setShippingProfileMode] = useState("GENERAL");
+  const [shippingProfileMode, setShippingProfileMode] = useState("CUSTOM");
 
   useEffect(() => {
     const savedMode = window.localStorage.getItem("shippingProfileMode");
@@ -972,6 +1138,7 @@ export default function ZonesPage() {
   }, []);
 
   const isSubmitting = fetcher.state === "submitting";
+  const freeUploadLocked = planId === "free" && freeUploadUsed;
 
   const usedCountryCodes = new Set(
   zones.flatMap((zone) => zone.countryCodes || []),
@@ -1154,6 +1321,13 @@ const clearSelectedCountries = () => {
           </s-banner>
         )}
 
+        {freeUploadLocked && (
+          <s-banner tone="warning">
+            Your store has already used its Free plan upload. Upgrade to
+            Standard to create or upload another zone.
+          </s-banner>
+        )}
+
         <div className="zone-form-grid">
           <s-text-field
             label="Zone Name"
@@ -1333,6 +1507,7 @@ const clearSelectedCountries = () => {
           onClick={saveZone}
           disabled={
             isSubmitting ||
+            freeUploadLocked ||
             (rateType === "packageWeight" && rateSetups.length === 0)
           }
           {...(isSubmitting ? { loading: true } : {})}
@@ -1392,7 +1567,7 @@ const clearSelectedCountries = () => {
                           <s-button
                             variant="primary"
                             onClick={() => uploadZone(zone.id)}
-                            disabled={isSubmitting}
+                            disabled={isSubmitting || freeUploadLocked}
                           >
                             Upload
                           </s-button>
@@ -1401,7 +1576,7 @@ const clearSelectedCountries = () => {
                           tone="critical"
                           variant="tertiary"
                           onClick={() => deleteZone(zone.id)}
-                          disabled={zone.status === "ACTIVE" || isSubmitting}
+                          disabled={isSubmitting}
                         >
                           Delete
                         </s-button>

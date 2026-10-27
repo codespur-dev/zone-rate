@@ -1,6 +1,7 @@
 import { redirect } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { STANDARD_SUBSCRIPTION_NAME } from "../plan.server";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -39,6 +40,7 @@ export const loader = async ({ request }) => {
             name
             status
             test
+            currentPeriodEnd
           }
         }
       }
@@ -53,7 +55,11 @@ export const loader = async ({ request }) => {
   const result = await response.json();
   const subscription = result?.data?.node;
 
-  if (!subscription || subscription.status !== "ACTIVE") {
+  if (
+    !subscription ||
+    subscription.status !== "ACTIVE" ||
+    subscription.name !== STANDARD_SUBSCRIPTION_NAME
+  ) {
     return redirect(createPlansRedirect("declined"));
   }
 
@@ -62,15 +68,18 @@ export const loader = async ({ request }) => {
       shop: session.shop,
     },
     update: {
-      planId: "standard",
-      subscriptionId: subscription.id,
-      subscriptionStatus: subscription.status,
+      standardAccessUntil: subscription.currentPeriodEnd
+        ? new Date(subscription.currentPeriodEnd)
+        : null,
+      cancelAtPeriodEnd: false,
+      trialUsedAt: new Date(),
     },
     create: {
       shop: session.shop,
-      planId: "standard",
-      subscriptionId: subscription.id,
-      subscriptionStatus: subscription.status,
+      standardAccessUntil: subscription.currentPeriodEnd
+        ? new Date(subscription.currentPeriodEnd)
+        : null,
+      trialUsedAt: new Date(),
     },
   });
 

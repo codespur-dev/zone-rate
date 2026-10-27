@@ -24,5 +24,13 @@ api_version = "2026-07"
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_shipping,write_shipping,read_locations"
 
+[[webhooks.subscriptions]]
+topics = [ "app_subscriptions/update" ]
+uri = "/webhooks/app_subscriptions/update"
+
+[[webhooks.subscriptions]]
+compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+uri = "/webhooks/compliance"
+
 [auth]
 redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]

@@ -1,3 +1,4 @@
+/* global process */
 import { useEffect } from "react";
 import {
   useActionData,
@@ -8,10 +9,14 @@ import {
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import {
+  reconcileShopPlan,
+  STANDARD_SUBSCRIPTION_NAME,
+} from "../plan.server";
 
 const SUPPORT_EMAIL = "support@codespur.com";
 const STANDARD_PRICE = 7.5;
-const TEST_MODE = true;
+const STANDARD_TRIAL_DAYS = 7;
 
 const PLANS = [
   {
@@ -21,7 +26,8 @@ const PLANS = [
     tagline: "For stores getting started",
     buttonText: "Start Free",
     features: [
-      "Create 1 shipping zone",
+      "Create and upload 1 shipping zone",
+      "One free upload per store",
       "Use General or Custom profile",
       "Weight-based and flat shipping rates",
       "Country selection and zone management",
@@ -63,67 +69,18 @@ const PLANS = [
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
 
-  const response = await admin.graphql(
-    `#graphql
-      query CurrentAppSubscriptions {
-        currentAppInstallation {
-          activeSubscriptions {
-            id
-            name
-            status
-            test
-            trialDays
-          }
-        }
-      }
-    `,
-  );
-
-  const result = await response.json();
-
-  const activeSubscriptions =
-    result?.data?.currentAppInstallation?.activeSubscriptions ?? [];
-
-  const standardSubscription = activeSubscriptions.find(
-    (subscription) =>
-      subscription.status === "ACTIVE" &&
-      subscription.name === "Standard Plan",
-  );
-
-  let currentPlanId = "free";
-
-  if (standardSubscription) {
-    await db.shop.upsert({
-      where: {
-        shop: session.shop,
-      },
-      update: {
-        planId: "standard",
-        subscriptionId: standardSubscription.id,
-        subscriptionStatus: standardSubscription.status,
-      },
-      create: {
-        shop: session.shop,
-        planId: "standard",
-        subscriptionId: standardSubscription.id,
-        subscriptionStatus: standardSubscription.status,
-      },
-    });
-
-    currentPlanId = "standard";
-  } else {
-    const shop = await db.shop.findUnique({
-      where: {
-        shop: session.shop,
-      },
-    });
-
-    currentPlanId = shop?.planId ?? "free";
-  }
+  const { planId: currentPlanId, shopRecord } = await reconcileShopPlan({
+    admin,
+    shop: session.shop,
+  });
 
   return {
     plans: PLANS,
     currentPlanId,
+    pendingDowngradeAt:
+      shopRecord.cancelAtPeriodEnd && shopRecord.standardAccessUntil
+        ? shopRecord.standardAccessUntil.toISOString()
+        : null,
     supportEmail: SUPPORT_EMAIL,
   };
 };
@@ -134,109 +91,144 @@ export const action = async ({ request }) => {
   const planId = formData.get("planId");
 
   if (planId === "free") {
-  const zoneCount = await db.shippingZone.count({
-    where: {
-      shop: session.shop,
-    },
-  });
+    const zoneCount = await db.shippingZone.count({
+      where: { shop: session.shop },
+    });
 
-  if (zoneCount > 1) {
+    if (zoneCount > 1) {
+      return {
+        error:
+          "Please delete additional zones and keep one zone before scheduling the Free plan.",
+      };
+    }
+
+    const { planId: currentPlanId, shopRecord, standardSubscription } =
+      await reconcileShopPlan({
+        admin,
+        shop: session.shop,
+      });
+
+    if (shopRecord.cancelAtPeriodEnd && shopRecord.standardAccessUntil) {
+      return {
+        success: true,
+        selectedPlan: "standard",
+        pendingDowngradeAt: shopRecord.standardAccessUntil.toISOString(),
+        message:
+          "Your downgrade is already scheduled. Standard remains available until the current billing period ends.",
+      };
+    }
+
+    if (currentPlanId === "standard" && standardSubscription) {
+      const cancelResponse = await admin.graphql(
+        `#graphql
+          mutation CancelAppSubscription($id: ID!) {
+            appSubscriptionCancel(id: $id, prorate: false) {
+              appSubscription {
+                id
+                status
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `,
+        {
+          variables: {
+            id: standardSubscription.id,
+          },
+        },
+      );
+
+      const cancelResult = await cancelResponse.json();
+      const cancellation = cancelResult?.data?.appSubscriptionCancel;
+
+      const cancelErrors = [
+        ...(cancelResult.errors || []).map((error) => error.message),
+        ...(cancellation?.userErrors || []).map((error) => error.message),
+      ];
+
+      if (cancelErrors.length > 0 || !cancellation?.appSubscription) {
+        return {
+          error:
+            cancelErrors.join(" ") ||
+            "Standard subscription could not be cancelled.",
+        };
+      }
+
+      const periodEnd = standardSubscription.currentPeriodEnd
+        ? new Date(standardSubscription.currentPeriodEnd)
+        : null;
+
+      if (periodEnd && periodEnd > new Date()) {
+        await db.shop.upsert({
+          where: {
+            shop: session.shop,
+          },
+          create: {
+            shop: session.shop,
+            standardAccessUntil: periodEnd,
+            cancelAtPeriodEnd: true,
+          },
+          update: {
+            standardAccessUntil: periodEnd,
+            cancelAtPeriodEnd: true,
+          },
+        });
+
+        return {
+          success: true,
+          selectedPlan: "standard",
+          pendingDowngradeAt: periodEnd.toISOString(),
+          message:
+            "Downgrade scheduled. Standard remains available until the current billing period ends.",
+        };
+      }
+    }
+
+    await db.shop.upsert({
+      where: {
+        shop: session.shop,
+      },
+      update: {
+        standardAccessUntil: null,
+        cancelAtPeriodEnd: false,
+      },
+      create: {
+        shop: session.shop,
+      },
+    });
+
     return {
-      error:
-        "To downgrade to the Free plan, please delete additional zones and keep only one zone.",
+      success: true,
+      selectedPlan: "free",
+      message: "Free plan activated successfully.",
     };
   }
 
-  const subscriptionsResponse = await admin.graphql(
-    `#graphql
-      query CurrentAppSubscriptions {
-        currentAppInstallation {
-          activeSubscriptions {
-            id
-            name
-            status
-          }
-        }
-      }
-    `,
-  );
-
-  const subscriptionsResult = await subscriptionsResponse.json();
-
-  const activeSubscriptions =
-    subscriptionsResult?.data?.currentAppInstallation
-      ?.activeSubscriptions ?? [];
-
-  const standardSubscription = activeSubscriptions.find(
-    (subscription) =>
-      subscription.status === "ACTIVE" &&
-      subscription.name === "Standard Plan",
-  );
-
-  if (standardSubscription) {
-    const cancelResponse = await admin.graphql(
-      `#graphql
-        mutation CancelAppSubscription($id: ID!) {
-          appSubscriptionCancel(id: $id, prorate: false) {
-            appSubscription {
-              id
-              status
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-      `,
-      {
-        variables: {
-          id: standardSubscription.id,
-        },
-      },
-    );
-
-    const cancelResult = await cancelResponse.json();
-    const cancellation = cancelResult?.data?.appSubscriptionCancel;
-
-    if (cancellation?.userErrors?.length) {
-      return {
-        error: cancellation.userErrors[0].message,
-      };
-    }
-
-    if (!cancellation?.appSubscription) {
-      return {
-        error: "Standard subscription could not be cancelled.",
-      };
-    }
-  }
-
-  await db.shop.upsert({
-    where: {
-      shop: session.shop,
-    },
-    update: {
-      planId: "free",
-      subscriptionId: null,
-      subscriptionStatus: "ACTIVE",
-    },
-    create: {
-      shop: session.shop,
-      planId: "free",
-      subscriptionId: null,
-      subscriptionStatus: "ACTIVE",
-    },
-  });
-
-  return {
-    success: true,
-    selectedPlan: "free",
-  };
-}
-
   if (planId === "standard") {
+    const currentPlan = await reconcileShopPlan({
+      admin,
+      shop: session.shop,
+    });
+
+    if (currentPlan.planId === "standard") {
+      return {
+        success: true,
+        selectedPlan: "standard",
+        message: "Standard plan is already active.",
+      };
+    }
+
     const appUrl = process.env.SHOPIFY_APP_URL;
+
+    if (!appUrl) {
+      return {
+        error: "SHOPIFY_APP_URL is not configured.",
+      };
+    }
+
     const requestUrl = new URL(request.url);
     const host = requestUrl.searchParams.get("host");
 
@@ -249,11 +241,18 @@ export const action = async ({ request }) => {
       confirmUrl.searchParams.set("host", host);
     }
 
-    if (!appUrl) {
-      return {
-        error: "SHOPIFY_APP_URL is not configured.",
-      };
-    }
+    const shopRecord = await db.shop.findUnique({
+      where: {
+        shop: session.shop,
+      },
+    });
+
+    const trialDays = shopRecord?.trialUsedAt
+      ? 0
+      : STANDARD_TRIAL_DAYS;
+
+    const testMode =
+      process.env.SHOPIFY_BILLING_TEST_MODE === "true";
 
     const response = await admin.graphql(
       `#graphql
@@ -262,12 +261,14 @@ export const action = async ({ request }) => {
           $lineItems: [AppSubscriptionLineItemInput!]!
           $returnUrl: URL!
           $test: Boolean!
+          $trialDays: Int!
         ) {
           appSubscriptionCreate(
             name: $name
             lineItems: $lineItems
             returnUrl: $returnUrl
             test: $test
+            trialDays: $trialDays
           ) {
             confirmationUrl
             userErrors {
@@ -279,10 +280,10 @@ export const action = async ({ request }) => {
       `,
       {
         variables: {
-          name: "Standard Plan",
-          // returnUrl: `${appUrl}/app/plans/confirm?planId=standard`,
+          name: STANDARD_SUBSCRIPTION_NAME,
           returnUrl: confirmUrl.toString(),
-          test: TEST_MODE,
+          test: testMode,
+          trialDays,
           lineItems: [
             {
               plan: {
@@ -303,9 +304,16 @@ export const action = async ({ request }) => {
     const result = await response.json();
     const subscription = result?.data?.appSubscriptionCreate;
 
-    if (subscription?.userErrors?.length) {
+    const billingErrors = [
+      ...(result.errors || []).map((error) => error.message),
+      ...(subscription?.userErrors || []).map(
+        (error) => error.message,
+      ),
+    ];
+
+    if (billingErrors.length > 0) {
       return {
-        error: subscription.userErrors[0].message,
+        error: billingErrors.join(" "),
       };
     }
 
@@ -326,7 +334,12 @@ export const action = async ({ request }) => {
 };
 
 export default function PlansPage() {
-  const { plans, currentPlanId, supportEmail } = useLoaderData();
+  const {
+  plans,
+  currentPlanId,
+  pendingDowngradeAt,
+  supportEmail,
+} = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -382,9 +395,19 @@ Thank you.`,
 
         {actionData?.success && (
           <div className="plans-message">
-            <s-banner tone="success" heading="Free plan activated">
+            <s-banner tone="success" heading="Plan updated">
+              <s-paragraph>{actionData.message}</s-paragraph>
+            </s-banner>
+          </div>
+        )}
+
+        {pendingDowngradeAt && (
+          <div className="plans-message">
+            <s-banner tone="info" heading="Downgrade scheduled">
               <s-paragraph>
-                Your Free plan is active. You can now create one shipping zone.
+                Standard remains active until{" "}
+                {new Date(pendingDowngradeAt).toLocaleDateString()}.
+                Free will activate after that billing period ends.
               </s-paragraph>
             </s-banner>
           </div>
@@ -466,18 +489,24 @@ Thank you.`,
                   className={`plan-button ${
                     plan.popular ? "plan-button--primary" : ""
                   }`}
-                  disabled={isCurrent || isSubmitting}
+                  disabled={
+                    isCurrent ||
+                    isSubmitting ||
+                    Boolean(pendingDowngradeAt && plan.id === "free")
+                  }
                   onClick={() =>
                     isPremium ? contactPremium() : selectPlan(plan.id)
                   }
                 >
                   {isCurrent
                     ? "Current Plan"
-                    : isSubmitting
-                      ? "Please wait..."
-                      : currentPlanId === "standard" && plan.id === "free"
-                      ? "Downgrade to Free"
-                      : plan.buttonText}
+                    : pendingDowngradeAt && plan.id === "free"
+                      ? "Downgrade Scheduled"
+                      : isSubmitting
+                        ? "Please wait..."
+                        : currentPlanId === "standard" && plan.id === "free"
+                          ? "Downgrade to Free"
+                          : plan.buttonText}
                 </button>
               </div>
             );

@@ -18,9 +18,10 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>A short heading about [your app]</h1>
+        <h1 className={styles.heading}>Zone Rates</h1>
         <p className={styles.text}>
-          A tagline about [your app] that describes your value proposition.
+          Create country-based shipping zones and weight-based rates directly
+          inside Shopify.
         </p>
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
@@ -35,19 +36,19 @@ export default function App() {
           </Form>
         )}
         <ul className={styles.list}>
-          <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
-          </li>
-          <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
-          </li>
-          <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
-          </li>
-        </ul>
+        <li>
+          <strong>Flexible zones.</strong> Group countries into the shipping
+          regions your store needs.
+        </li>
+        <li>
+          <strong>Weight-based rates.</strong> Generate complete rate tables
+          from a few simple values.
+        </li>
+        <li>
+          <strong>Shopify integration.</strong> Upload saved zones and rates
+          to a delivery profile.
+        </li>
+      </ul>
       </div>
     </div>
   );

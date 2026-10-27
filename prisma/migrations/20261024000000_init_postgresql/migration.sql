@@ -75,9 +75,13 @@ CREATE TABLE "RateRow" (
 CREATE TABLE "Shop" (
     "id" TEXT NOT NULL,
     "shop" TEXT NOT NULL,
-    "planId" TEXT,
-    "subscriptionId" TEXT,
-    "subscriptionStatus" TEXT,
+    "freeUploadUsed" BOOLEAN NOT NULL DEFAULT false,
+    "firstFreeUploadAt" TIMESTAMP(3),
+    "trialUsedAt" TIMESTAMP(3),
+    "standardAccessUntil" TIMESTAMP(3),
+    "cancelAtPeriodEnd" BOOLEAN NOT NULL DEFAULT false,
+    "appProfileId" TEXT,
+    "appLocationGroupId" TEXT,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "Shop_pkey" PRIMARY KEY ("id")
