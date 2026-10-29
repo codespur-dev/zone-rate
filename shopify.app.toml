@@ -2,11 +2,11 @@
 
 client_id = "81d6b5605d42f79316f5c668e0fe1eb6"
 name = "zone rates"
-application_url = "https://shopify.dev/apps/default-app-home"
+application_url = "https://zone-rate-jx94r.ondigitalocean.app"
 embedded = true
 
 [build]
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
 include_config_on_deploy = true
 
 [webhooks]
@@ -33,4 +33,4 @@ compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact
 uri = "/webhooks/compliance"
 
 [auth]
-redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
+redirect_urls = [ "https://zone-rate-jx94r.ondigitalocean.app/auth/callback" ]
