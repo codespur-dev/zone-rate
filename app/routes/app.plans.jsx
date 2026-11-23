@@ -49,21 +49,6 @@ const PLANS = [
       "Email support",
     ],
   },
-  {
-    id: "premium",
-    name: "Custom",
-    price: null,
-    tagline: "For businesses with custom shipping requirements",
-    buttonText: "Contact Us",
-    features: [
-      "Everything included in Standard",
-      "Custom shipping rules and rate logic",
-      "Store-specific customization",
-      "Additional integration assistance",
-      "Requirement review and guided implementation",
-      "Email support",
-    ],
-  },
 ];
 
 export const loader = async ({ request }) => {
@@ -365,32 +350,11 @@ export default function PlansPage() {
     );
   };
 
-  const contactPremium = () => {
-    const subject = encodeURIComponent(
-      "Custom Plan – Custom Shipping Requirements",
-    );
-
-    const body = encodeURIComponent(
-      `Hi CodeSpur Support,
-
-I am interested in the Custom plan and would like to discuss my custom shipping requirements.
-
-Store:
-Requirements:
-
-Thank you.`,
-    );
-
-    window.location.href =
-      `mailto:${supportEmail}?subject=${subject}&body=${body}`;
-  };
-
   return (
     <s-page heading="Plans">
       <s-section heading="Choose the right plan for your store">
         <s-paragraph>
-          Start free, manage unlimited shipping zones with Standard, or contact
-          us when your store requires a customized shipping solution.
+          Start free or manage unlimited shipping zones with Standard.
         </s-paragraph>
 
         {actionData?.success && (
@@ -424,7 +388,6 @@ Thank you.`,
         <div className="plans-grid">
           {plans.map((plan) => {
             const isCurrent = currentPlanId === plan.id;
-            const isPremium = plan.id === "premium";
 
             return (
               <div
@@ -447,12 +410,7 @@ Thank you.`,
                 </div>
 
                 <div className="plan-price">
-                  {plan.price === null ? (
-                    <>
-                      <strong>Custom</strong>
-                      <span>Contact for pricing</span>
-                    </>
-                  ) : plan.price === 0 ? (
+                  {plan.price === 0 ? (
                     <>
                       <strong>Free</strong>
                       <span>No monthly charge</span>
@@ -464,14 +422,6 @@ Thank you.`,
                     </>
                   )}
                 </div>
-
-                {isPremium && (
-                  <p className="premium-description">
-                    Choose Custom when your shipping setup requires custom
-                    rules, additional integrations, or assistance designed
-                    specifically around your store’s workflow.
-                  </p>
-                )}
 
                 <div className="plan-divider" />
 
@@ -494,9 +444,7 @@ Thank you.`,
                     isSubmitting ||
                     Boolean(pendingDowngradeAt && plan.id === "free")
                   }
-                  onClick={() =>
-                    isPremium ? contactPremium() : selectPlan(plan.id)
-                  }
+                  onClick={() => selectPlan(plan.id)}
                 >
                   {isCurrent
                     ? "Current Plan"
@@ -514,7 +462,7 @@ Thank you.`,
         </div>
 
         <div className="support-note">
-          Need help choosing a plan? Email{" "}
+          Need help using the app? Email{" "}
           <a href={`mailto:${supportEmail}`}>{supportEmail}</a>
         </div>
       </s-section>
@@ -526,7 +474,7 @@ Thank you.`,
 
         .plans-grid {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 20px;
           margin-top: 28px;
           padding-top: 12px;
@@ -600,13 +548,6 @@ Thank you.`,
         .plan-price span {
           color: #6d7175;
           font-size: 13px;
-        }
-
-        .premium-description {
-          margin: 12px 0 0;
-          color: #616161;
-          font-size: 13px;
-          line-height: 19px;
         }
 
         .plan-divider {
