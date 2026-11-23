@@ -14,7 +14,7 @@ import {
   STANDARD_SUBSCRIPTION_NAME,
 } from "../plan.server";
 
-const SUPPORT_EMAIL = "support@codespur.com";
+const SUPPORT_EMAIL = "support@codespur.net";
 const STANDARD_PRICE = 7.5;
 const STANDARD_TRIAL_DAYS = 7;
 
@@ -51,7 +51,7 @@ const PLANS = [
   },
   {
     id: "premium",
-    name: "Premium",
+    name: "Custom",
     price: null,
     tagline: "For businesses with custom shipping requirements",
     buttonText: "Contact Us",
@@ -367,13 +367,13 @@ export default function PlansPage() {
 
   const contactPremium = () => {
     const subject = encodeURIComponent(
-      "Premium Plan – Custom Shipping Requirements",
+      "Custom Plan – Custom Shipping Requirements",
     );
 
     const body = encodeURIComponent(
       `Hi CodeSpur Support,
 
-I am interested in the Premium plan and would like to discuss my custom shipping requirements.
+I am interested in the Custom plan and would like to discuss my custom shipping requirements.
 
 Store:
 Requirements:
@@ -450,7 +450,7 @@ Thank you.`,
                   {plan.price === null ? (
                     <>
                       <strong>Custom</strong>
-                      <span>Call for pricing</span>
+                      <span>Contact for pricing</span>
                     </>
                   ) : plan.price === 0 ? (
                     <>
@@ -467,7 +467,7 @@ Thank you.`,
 
                 {isPremium && (
                   <p className="premium-description">
-                    Choose Premium when your shipping setup requires custom
+                    Choose Custom when your shipping setup requires custom
                     rules, additional integrations, or assistance designed
                     specifically around your store’s workflow.
                   </p>
