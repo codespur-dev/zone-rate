@@ -271,8 +271,37 @@ export const action = async ({ request }) => {
       ? 0
       : STANDARD_TRIAL_DAYS;
 
-    const testMode =
-      process.env.SHOPIFY_BILLING_TEST_MODE === "true";
+    let isTestCharge = false;
+
+    try {
+      const shopPlanResponse = await admin.graphql(
+        `#graphql
+          query ShopPlanForBilling {
+            shop {
+              plan {
+                partnerDevelopment
+              }
+            }
+          }
+        `,
+      );
+      const shopPlanResult = await shopPlanResponse.json();
+
+      if (shopPlanResult.errors?.length) {
+        console.warn(
+          "Could not verify whether the shop is a development store; using a non-test billing charge.",
+          shopPlanResult.errors,
+        );
+      } else {
+        isTestCharge =
+          shopPlanResult.data?.shop?.plan?.partnerDevelopment === true;
+      }
+    } catch (error) {
+      console.warn(
+        "Could not verify whether the shop is a development store; using a non-test billing charge.",
+        error,
+      );
+    }
 
     const response = await admin.graphql(
       `#graphql
@@ -302,7 +331,7 @@ export const action = async ({ request }) => {
         variables: {
           name: STANDARD_SUBSCRIPTION_NAME,
           returnUrl: confirmUrl.toString(),
-          test: testMode,
+          test: isTestCharge,
           trialDays,
           lineItems: [
             {
