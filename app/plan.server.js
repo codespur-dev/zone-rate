@@ -73,14 +73,6 @@ export async function reconcileShopPlan({ admin, shop }) {
   );
 
   if (standardSubscription) {
-    if (shopRecord.cancelAtPeriodEnd && hasStandardAccess(shopRecord)) {
-      return {
-        planId: "standard",
-        shopRecord,
-        standardSubscription,
-      };
-    }
-
     const currentPeriodEnd = toValidDate(
       standardSubscription.currentPeriodEnd,
     );
@@ -101,7 +93,14 @@ export async function reconcileShopPlan({ admin, shop }) {
   }
 
   if (hasStandardAccess(shopRecord)) {
-    return { planId: "standard", shopRecord };
+    const cancelledShop = shopRecord.cancelAtPeriodEnd
+      ? shopRecord
+      : await db.shop.update({
+          where: { shop },
+          data: { cancelAtPeriodEnd: true },
+        });
+
+    return { planId: "standard", shopRecord: cancelledShop };
   }
 
   const freeRecord =

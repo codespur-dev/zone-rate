@@ -54,14 +54,31 @@ const PLANS = [
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
 
-  const { planId: currentPlanId, shopRecord } = await reconcileShopPlan({
+  const {
+    planId,
+    shopRecord,
+    standardSubscription,
+    billingCheckFailed,
+  } = await reconcileShopPlan({
     admin,
     shop: session.shop,
   });
 
+  const cancelledAccessUntil =
+    !billingCheckFailed &&
+    planId === "standard" &&
+    !standardSubscription &&
+    shopRecord.cancelAtPeriodEnd &&
+    shopRecord.standardAccessUntil
+      ? shopRecord.standardAccessUntil.toISOString()
+      : null;
+
   return {
     plans: PLANS,
-    currentPlanId,
+    currentPlanId: billingCheckFailed ? null : planId,
+    standardSubscriptionActive: Boolean(standardSubscription),
+    billingCheckFailed: Boolean(billingCheckFailed),
+    cancelledAccessUntil,
     pendingDowngradeAt:
       shopRecord.cancelAtPeriodEnd && shopRecord.standardAccessUntil
         ? shopRecord.standardAccessUntil.toISOString()
@@ -87,11 +104,22 @@ export const action = async ({ request }) => {
       };
     }
 
-    const { planId: currentPlanId, shopRecord, standardSubscription } =
-      await reconcileShopPlan({
-        admin,
-        shop: session.shop,
-      });
+    const {
+      planId: currentPlanId,
+      shopRecord,
+      standardSubscription,
+      billingCheckFailed,
+    } = await reconcileShopPlan({
+      admin,
+      shop: session.shop,
+    });
+
+    if (billingCheckFailed) {
+      return {
+        error:
+          "Unable to verify your Shopify subscription. Please try again.",
+      };
+    }
 
     if (shopRecord.cancelAtPeriodEnd && shopRecord.standardAccessUntil) {
       return {
@@ -198,7 +226,14 @@ export const action = async ({ request }) => {
       shop: session.shop,
     });
 
-    if (currentPlan.planId === "standard") {
+    if (currentPlan.billingCheckFailed) {
+      return {
+        error:
+          "Unable to verify your Shopify subscription. Please try again.",
+      };
+    }
+
+    if (currentPlan.standardSubscription) {
       return {
         success: true,
         selectedPlan: "standard",
@@ -322,6 +357,9 @@ export default function PlansPage() {
   const {
   plans,
   currentPlanId,
+  standardSubscriptionActive,
+  billingCheckFailed,
+  cancelledAccessUntil,
   pendingDowngradeAt,
   supportEmail,
 } = useLoaderData();
@@ -385,9 +423,24 @@ export default function PlansPage() {
           </div>
         )}
 
+        {billingCheckFailed && (
+          <div className="plans-message">
+            <s-banner tone="critical" heading="Unable to verify subscription">
+              <s-paragraph>
+                Shopify could not confirm your current plan. Please reload and try again.
+              </s-paragraph>
+            </s-banner>
+          </div>
+        )}
+
         <div className="plans-grid">
           {plans.map((plan) => {
-            const isCurrent = currentPlanId === plan.id;
+            const isCurrent =
+              plan.id === "standard"
+                ? standardSubscriptionActive
+                : currentPlanId === "free";
+            const isCancelled =
+              plan.id === "standard" && Boolean(cancelledAccessUntil);
 
             return (
               <div
@@ -400,9 +453,14 @@ export default function PlansPage() {
                   <span className="plan-badge">Most Popular</span>
                 )}
 
-                {isCurrent && (
+                {isCancelled ? (
+                  <span className="current-plan-badge">
+                    Cancelled — access until{" "}
+                    {new Date(cancelledAccessUntil).toLocaleDateString()}
+                  </span>
+                ) : isCurrent ? (
                   <span className="current-plan-badge">Current Plan</span>
-                )}
+                ) : null}
 
                 <div className="plan-header">
                   <h2>{plan.name}</h2>
@@ -442,12 +500,15 @@ export default function PlansPage() {
                   disabled={
                     isCurrent ||
                     isSubmitting ||
+                    billingCheckFailed ||
                     Boolean(pendingDowngradeAt && plan.id === "free")
                   }
                   onClick={() => selectPlan(plan.id)}
                 >
                   {isCurrent
                     ? "Current Plan"
+                    : isCancelled
+                      ? "Resubscribe"
                     : pendingDowngradeAt && plan.id === "free"
                       ? "Downgrade Scheduled"
                       : isSubmitting

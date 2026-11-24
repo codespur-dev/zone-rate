@@ -102,9 +102,11 @@ export const action = async ({ request }) => {
       update: {
         appProfileId: null,
         appLocationGroupId: null,
+        cancelAtPeriodEnd: true,
       },
       create: {
         shop,
+        cancelAtPeriodEnd: true,
       },
     }),
   ]);
